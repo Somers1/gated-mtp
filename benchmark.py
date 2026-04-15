@@ -167,9 +167,12 @@ def run_speed_benchmark(model, tokenizer, thresholds: list[float], max_tokens: i
             stats["prompt"] = prompt
             results["gated"][threshold].append(stats)
         gated_tps = sum(r["tokens_per_second"] for r in results["gated"][threshold]) / len(results["gated"][threshold])
-        speedup = (gated_tps / baseline_tps - 1) * 100
         avg_fire_rate = sum(r["gate_accepts"] for r in results["gated"][threshold]) / sum(r["tokens_generated"] for r in results["gated"][threshold]) * 100
-        print(f"  Gated avg: {gated_tps:.1f} tok/s ({speedup:+.1f}%) | gate fires {avg_fire_rate:.1f}%")
+        if results["baseline"]:
+            speedup = (gated_tps / baseline_tps - 1) * 100
+            print(f"  Gated avg: {gated_tps:.1f} tok/s ({speedup:+.1f}%) | gate fires {avg_fire_rate:.1f}%")
+        else:
+            print(f"  Gated avg: {gated_tps:.1f} tok/s | gate fires {avg_fire_rate:.1f}%")
     return results
 
 

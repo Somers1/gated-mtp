@@ -142,7 +142,8 @@ def train():
     log_path = LOG_DIR / f"train_{run_id}.csv"
     log_file = open(log_path, "w", newline="")
     log_writer = csv.writer(log_file)
-    log_writer.writerow(["epoch", "step", "loss", "head_2_loss", "gate_2_loss", "head_2_accuracy", "elapsed_s"])
+    stat_keys = [f"gate_{i+2}_loss" for i in range(config.NUM_EXTRA_HEADS)] + [f"head_{i+2}_accuracy" for i in range(config.NUM_EXTRA_HEADS)] + [f"head_{i+2}_loss" for i in range(config.NUM_EXTRA_HEADS)]
+    log_writer.writerow(["epoch", "step", "loss"] + sorted(stat_keys) + ["elapsed_s"])
     print(f"Logging to {log_path}")
     # --- Training loop ---
     for epoch in range(config.EPOCHS):
@@ -173,6 +174,7 @@ def train():
     checkpoint_path = checkpoint_dir / f"gated_mtp_{config.MODEL_TYPE}_{config.NUM_EXTRA_HEADS}heads.pt"
     save_dict = {"model_state": {k: v for k, v in model.state_dict().items() if "base." not in k}, "config": {"num_extra_heads": config.NUM_EXTRA_HEADS, "base_model": config.BASE_MODEL, "model_type": config.MODEL_TYPE}}
     torch.save(save_dict, checkpoint_path)
+    log_file.close()
     print(f"\nCheckpoint saved to {checkpoint_path}")
 
 
