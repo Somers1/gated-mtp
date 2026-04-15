@@ -91,12 +91,7 @@ def compute_loss(extra_logits: list, confidences: list, input_ids: torch.Tensor)
         logits_trimmed = logits_trimmed[:, :min_len]
         target = target[:, :min_len]
         conf_trimmed = conf_trimmed[:, :min_len]
-        # Compute cross-entropy per sequence to avoid materializing one giant
-        # [batch*seq_len, vocab_size] tensor that blows up VRAM.
-        loss_head = torch.tensor(0.0, device=input_ids.device)
-        for b in range(logits_trimmed.size(0)):
-            loss_head = loss_head + nn.functional.cross_entropy(logits_trimmed[b], target[b])
-        loss_head = loss_head / logits_trimmed.size(0)
+        loss_head = nn.functional.cross_entropy(logits_trimmed.reshape(-1, logits_trimmed.size(-1)), target.reshape(-1))
         with torch.no_grad():
             preds = logits_trimmed.argmax(dim=-1)
             correct = (preds == target).float()
