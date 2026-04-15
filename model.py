@@ -83,7 +83,7 @@ def load_gated_mtp(model_name: str, device: str, dtype: str, num_extra_heads: in
     then moved to the same device.
     """
     torch_dtype = getattr(torch, dtype)
-    base = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch_dtype, device_map=device)
+    base = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch_dtype, device_map=device)
     model = GatedMTP(base, num_extra_heads=num_extra_heads)
     for head in model.extra_heads:
         head.to(device=base.device, dtype=torch_dtype)

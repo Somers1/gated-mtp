@@ -92,9 +92,14 @@ def train():
     print(f"Base model on {device}, dtype {config.DTYPE}")
     print(f"Trainable parameters: {model.trainable_param_count:,} ({model.trainable_param_count / 1e6:.1f}M)")
     print(f"Extra heads: {config.NUM_EXTRA_HEADS}, predicting tokens t+2 through t+{config.NUM_EXTRA_HEADS + 1}")
-    print(f"\nLoading dataset {config.DATASET}...")
-    dataset = load_dataset(config.DATASET, config.DATASET_SUBSET, split=f"train[:{config.MAX_TRAIN_SAMPLES}]")
-    texts = [row["text"] for row in dataset if len(row["text"]) > 100]
+    print(f"\nLoading dataset {config.DATASET} (streaming, first {config.MAX_TRAIN_SAMPLES} samples)...")
+    dataset = load_dataset(config.DATASET, config.DATASET_SUBSET, split="train", streaming=True)
+    texts = []
+    for row in dataset:
+        if len(row["text"]) > 100:
+            texts.append(row["text"])
+        if len(texts) >= config.MAX_TRAIN_SAMPLES:
+            break
     print(f"Tokenizing {len(texts)} documents into {config.SEQ_LEN}-token chunks...")
     train_dataset = TokenizedDataset(texts, tokenizer, config.SEQ_LEN)
     print(f"Training on {len(train_dataset)} chunks")
