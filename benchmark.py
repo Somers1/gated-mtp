@@ -18,7 +18,7 @@ import torch
 from transformers import AutoTokenizer
 from datasets import load_dataset
 import config
-from model import load_gated_mtp
+from model import load_model
 from generate import generate, load_checkpoint
 
 RESULTS_DIR = Path("./results")
@@ -291,8 +291,8 @@ def main():
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
     thresholds = [float(t) for t in args.thresholds.split(",")]
-    print(f"Loading model {config.BASE_MODEL}...")
-    model = load_gated_mtp(config.BASE_MODEL, device=config.DEVICE, dtype=config.DTYPE, num_extra_heads=config.NUM_EXTRA_HEADS)
+    print(f"Loading model {config.BASE_MODEL} (type={config.MODEL_TYPE})...")
+    model = load_model(config.BASE_MODEL, device=config.DEVICE, dtype=config.DTYPE, num_extra_heads=config.NUM_EXTRA_HEADS, model_type=config.MODEL_TYPE, hidden_mult=config.CHAIN_HIDDEN_MULT)
     if args.checkpoint:
         print(f"Loading checkpoint {args.checkpoint}...")
         load_checkpoint(model, args.checkpoint)

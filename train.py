@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset
 from transformers import AutoTokenizer
 import config
-from model import load_gated_mtp
+from model import load_model
 
 CACHE_DIR = Path("./data_cache")
 LOG_DIR = Path("./logs")
@@ -110,8 +110,8 @@ def compute_loss(extra_logits: list, confidences: list, input_ids: torch.Tensor)
 def train():
     print(f"Loading tokenizer from {config.BASE_MODEL}...")
     tokenizer = AutoTokenizer.from_pretrained(config.BASE_MODEL)
-    print(f"Loading base model {config.BASE_MODEL}...")
-    model = load_gated_mtp(config.BASE_MODEL, device=config.DEVICE, dtype=config.DTYPE, num_extra_heads=config.NUM_EXTRA_HEADS)
+    print(f"Loading base model {config.BASE_MODEL} (type={config.MODEL_TYPE})...")
+    model = load_model(config.BASE_MODEL, device=config.DEVICE, dtype=config.DTYPE, num_extra_heads=config.NUM_EXTRA_HEADS, model_type=config.MODEL_TYPE, hidden_mult=config.CHAIN_HIDDEN_MULT)
     device = model.base.device
     print(f"Base model on {device}, dtype {config.DTYPE}")
     print(f"Trainable parameters: {model.trainable_param_count:,} ({model.trainable_param_count / 1e6:.1f}M)")
@@ -170,8 +170,9 @@ def train():
     # --- Save checkpoint ---
     checkpoint_dir = Path(config.CHECKPOINT_DIR)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = checkpoint_dir / f"gated_mtp_{config.NUM_EXTRA_HEADS}heads.pt"
-    torch.save({"extra_heads": [h.state_dict() for h in model.extra_heads], "gates": [g.state_dict() for g in model.gates], "config": {"num_extra_heads": config.NUM_EXTRA_HEADS, "base_model": config.BASE_MODEL}}, checkpoint_path)
+    checkpoint_path = checkpoint_dir / f"gated_mtp_{config.MODEL_TYPE}_{config.NUM_EXTRA_HEADS}heads.pt"
+    save_dict = {"model_state": {k: v for k, v in model.state_dict().items() if "base." not in k}, "config": {"num_extra_heads": config.NUM_EXTRA_HEADS, "base_model": config.BASE_MODEL, "model_type": config.MODEL_TYPE}}
+    torch.save(save_dict, checkpoint_path)
     print(f"\nCheckpoint saved to {checkpoint_path}")
 
 

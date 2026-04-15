@@ -17,3 +17,7 @@ DATASET_SUBSET = os.environ.get("DATASET_SUBSET", "20231101.en")
 MAX_TRAIN_SAMPLES = int(os.environ.get("MAX_TRAIN_SAMPLES", "50000"))
 
 CHECKPOINT_DIR = os.environ.get("CHECKPOINT_DIR", "./checkpoints")
+
+# Chained MLP variant
+MODEL_TYPE = os.environ.get("MODEL_TYPE", "linear")  # "linear" or "chained"
+CHAIN_HIDDEN_MULT = float(os.environ.get("CHAIN_HIDDEN_MULT", "0.25"))  # MLP bottleneck as fraction of hidden_dim
