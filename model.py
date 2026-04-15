@@ -137,10 +137,11 @@ class ChainedGatedMTP(nn.Module):
         # projection [hidden_dim, embed_dim] that compresses token representations.
         # Using a slice of the embedding weights gives a meaningful starting point.
         embed_weight = self.base.get_input_embeddings().weight.data
-        # SVD-based init: get the top embed_dim components of the embedding space
+        # SVD-based init: get the top embed_dim components of the embedding space.
+        # V is [min(vocab, hidden), hidden], we want [embed_dim, hidden] for the projection.
         if embed_weight.size(0) > self.embed_dim:
             U, S, V = torch.linalg.svd(embed_weight.float(), full_matrices=False)
-            self.embed_proj.weight.data.copy_(V[:self.embed_dim].T.to(self.embed_proj.weight.dtype))
+            self.embed_proj.weight.data.copy_(V[:self.embed_dim].to(self.embed_proj.weight.dtype))
 
     @property
     def trainable_params(self) -> list[nn.Parameter]:
