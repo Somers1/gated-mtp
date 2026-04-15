@@ -18,6 +18,9 @@ MAX_TRAIN_SAMPLES = int(os.environ.get("MAX_TRAIN_SAMPLES", "50000"))
 
 CHECKPOINT_DIR = os.environ.get("CHECKPOINT_DIR", "./checkpoints")
 
-# Chained MLP variant
-MODEL_TYPE = os.environ.get("MODEL_TYPE", "linear")  # "linear" or "chained"
-CHAIN_HIDDEN_MULT = float(os.environ.get("CHAIN_HIDDEN_MULT", "0.25"))  # MLP bottleneck as fraction of hidden_dim
+SPARSITY = float(os.environ.get("SPARSITY", "0.9"))
+ROUTER_BOTTLENECK = int(os.environ.get("ROUTER_BOTTLENECK", "128"))
+ROUTER_LR = float(os.environ.get("ROUTER_LR", "1e-3"))
+
+MODEL_TYPE = os.environ.get("MODEL_TYPE", "linear")
+CHAIN_HIDDEN_MULT = float(os.environ.get("CHAIN_HIDDEN_MULT", "0.25"))
