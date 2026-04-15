@@ -135,24 +135,27 @@ def measure_gate_accuracy(model, tokenizer, prompt: str, max_tokens: int = 128, 
     }
 
 
-def run_speed_benchmark(model, tokenizer, thresholds: list[float], max_tokens: int = 128):
+def run_speed_benchmark(model, tokenizer, thresholds: list[float], max_tokens: int = 128, skip_baseline: bool = False):
     """Run all speed prompts through baseline and gated generation."""
     results = {"baseline": [], "gated": {t: [] for t in thresholds}}
     # Warmup pass to stabilize GPU clocks
     print("Warmup...")
     for _ in range(3):
         generate_baseline(model, tokenizer, "Hello world", max_tokens=32)
-    print(f"\nRunning baseline ({len(SPEED_PROMPTS)} prompts)...")
-    for prompt in SPEED_PROMPTS:
-        t0 = time.time()
-        text, stats = generate_baseline(model, tokenizer, prompt, max_tokens=max_tokens)
-        elapsed = time.time() - t0
-        stats["wall_time"] = elapsed
-        stats["tokens_per_second"] = stats["tokens_generated"] / elapsed
-        stats["prompt"] = prompt
-        results["baseline"].append(stats)
-    baseline_tps = sum(r["tokens_per_second"] for r in results["baseline"]) / len(results["baseline"])
-    print(f"  Baseline avg: {baseline_tps:.1f} tok/s")
+    if not skip_baseline:
+        print(f"\nRunning baseline ({len(SPEED_PROMPTS)} prompts)...")
+        for prompt in SPEED_PROMPTS:
+            t0 = time.time()
+            text, stats = generate_baseline(model, tokenizer, prompt, max_tokens=max_tokens)
+            elapsed = time.time() - t0
+            stats["wall_time"] = elapsed
+            stats["tokens_per_second"] = stats["tokens_generated"] / elapsed
+            stats["prompt"] = prompt
+            results["baseline"].append(stats)
+        baseline_tps = sum(r["tokens_per_second"] for r in results["baseline"]) / len(results["baseline"])
+        print(f"  Baseline avg: {baseline_tps:.1f} tok/s")
+    else:
+        print("\nSkipping baseline...")
     for threshold in thresholds:
         print(f"\nRunning gated (threshold={threshold}, {len(SPEED_PROMPTS)} prompts)...")
         for prompt in SPEED_PROMPTS:
@@ -284,10 +287,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--max-tokens", type=int, default=128)
-    parser.add_argument("--thresholds", type=str, default="0.7,0.8,0.85,0.9,0.95")
+    parser.add_argument("--thresholds", type=str, default="0.15,0.2,0.25,0.3,0.35")
     parser.add_argument("--quality-samples", type=int, default=200)
     parser.add_argument("--skip-quality", action="store_true")
     parser.add_argument("--skip-gate-analysis", action="store_true")
+    parser.add_argument("--skip-baseline", action="store_true")
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
     thresholds = [float(t) for t in args.thresholds.split(",")]
@@ -300,13 +304,14 @@ def main():
     all_results = {}
     # 1. Speed benchmark
     print(f"\n{'='*80}\nSPEED BENCHMARK ({len(SPEED_PROMPTS)} prompts, {args.max_tokens} max tokens)\n{'='*80}")
-    speed_results = run_speed_benchmark(model, tokenizer, thresholds, max_tokens=args.max_tokens)
+    speed_results = run_speed_benchmark(model, tokenizer, thresholds, max_tokens=args.max_tokens, skip_baseline=args.skip_baseline)
     all_results["speed"] = speed_results
-    print_summary(speed_results)
+    if not args.skip_baseline:
+        print_summary(speed_results)
     # 2. Gate analysis
     if not args.skip_gate_analysis:
         print(f"\n{'='*80}\nGATE ANALYSIS\n{'='*80}")
-        gate_results = run_gate_analysis(model, tokenizer, threshold=0.85, max_tokens=args.max_tokens)
+        gate_results = run_gate_analysis(model, tokenizer, threshold=thresholds[len(thresholds) // 2], max_tokens=args.max_tokens)
         all_results["gate_analysis"] = gate_results
     # 3. Quality benchmark
     if not args.skip_quality:
