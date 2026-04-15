@@ -3,6 +3,7 @@ __pycache__/
 *.pt
 checkpoints/
 data_cache/
+logs/
 .env
 *.egg-info/
 dist/

@@ -11,8 +11,10 @@ the base model completely frozen. The training has two objectives per head:
 Further-ahead heads get decaying loss weights (0.8^i) since they're
 inherently harder and less important than nearer predictions.
 """
+import csv
 import hashlib
 import time
+from datetime import datetime
 from pathlib import Path
 import numpy as np
 import torch
@@ -24,6 +26,7 @@ import config
 from model import load_gated_mtp
 
 CACHE_DIR = Path("./data_cache")
+LOG_DIR = Path("./logs")
 
 
 class TokenizedDataset(torch.utils.data.Dataset):
@@ -133,6 +136,14 @@ def train():
     print(f"Training on {len(train_dataset)} chunks")
     dataloader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, drop_last=True)
     optimizer = torch.optim.AdamW(model.trainable_params, lr=config.LEARNING_RATE)
+    # --- Set up CSV log ---
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = LOG_DIR / f"train_{run_id}.csv"
+    log_file = open(log_path, "w", newline="")
+    log_writer = csv.writer(log_file)
+    log_writer.writerow(["epoch", "step", "loss", "head_2_loss", "gate_2_loss", "head_2_accuracy", "elapsed_s"])
+    print(f"Logging to {log_path}")
     # --- Training loop ---
     for epoch in range(config.EPOCHS):
         epoch_loss = 0.0
@@ -151,6 +162,8 @@ def train():
                 elapsed = time.time() - t0
                 stats_str = " | ".join(f"{k}: {v:.4f}" for k, v in stats.items())
                 print(f"  epoch {epoch+1} step {step}/{len(dataloader)} | loss: {loss.item():.4f} | {stats_str} | {elapsed:.0f}s")
+                log_writer.writerow([epoch + 1, step, f"{loss.item():.4f}"] + [f"{stats[k]:.4f}" for k in sorted(stats.keys())] + [f"{elapsed:.0f}"])
+                log_file.flush()
         avg_loss = epoch_loss / epoch_steps
         elapsed = time.time() - t0
         print(f"Epoch {epoch+1}/{config.EPOCHS} complete | avg loss: {avg_loss:.4f} | {elapsed:.0f}s")
