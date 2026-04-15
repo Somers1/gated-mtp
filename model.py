@@ -70,8 +70,12 @@ class GatedMTP(nn.Module):
             outputs = self.base(input_ids, attention_mask=attention_mask, output_hidden_states=True)
             hidden = outputs.hidden_states[-1]
         base_logits = outputs.logits
-        extra_logits = [head(hidden) for head in self.extra_heads]
-        confidences = [gate(hidden) for gate in self.gates]
+        # Cast hidden state to float32 to match the trainable heads/gates.
+        # Base model outputs float16, but our trainable components need float32
+        # for stable gradients and MPS compatibility.
+        hidden_f32 = hidden.float()
+        extra_logits = [head(hidden_f32) for head in self.extra_heads]
+        confidences = [gate(hidden_f32) for gate in self.gates]
         return base_logits, extra_logits, confidences
 
 
@@ -85,8 +89,11 @@ def load_gated_mtp(model_name: str, device: str, dtype: str, num_extra_heads: in
     torch_dtype = getattr(torch, dtype)
     base = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch_dtype, device_map=device)
     model = GatedMTP(base, num_extra_heads=num_extra_heads)
+    # Keep trainable components in float32 for stable training and MPS compatibility.
+    # The base model stays in the requested dtype (float16) to save memory —
+    # the hidden states get cast to float32 when they hit the extra heads.
     for head in model.extra_heads:
-        head.to(device=base.device, dtype=torch_dtype)
+        head.to(device=base.device, dtype=torch.float32)
     for gate in model.gates:
-        gate.to(device=base.device, dtype=torch_dtype)
+        gate.to(device=base.device, dtype=torch.float32)
     return model
