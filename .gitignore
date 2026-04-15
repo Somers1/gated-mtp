@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pt
 checkpoints/
+data_cache/
 .env
 *.egg-info/
 dist/

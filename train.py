@@ -11,8 +11,10 @@ the base model completely frozen. The training has two objectives per head:
 Further-ahead heads get decaying loss weights (0.8^i) since they're
 inherently harder and less important than nearer predictions.
 """
+import hashlib
 import time
 from pathlib import Path
+import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -21,28 +23,47 @@ from transformers import AutoTokenizer
 import config
 from model import load_gated_mtp
 
+CACHE_DIR = Path("./data_cache")
+
 
 class TokenizedDataset(torch.utils.data.Dataset):
     """
     Pre-tokenizes a text dataset into fixed-length chunks for training.
-    Each item is a dict with 'input_ids' of length seq_len.
+    Caches the tokenized chunks to disk so subsequent runs load instantly.
     """
 
-    def __init__(self, texts: list[str], tokenizer, seq_len: int):
+    def __init__(self, chunks: np.ndarray, seq_len: int):
+        self.chunks = chunks
         self.seq_len = seq_len
-        all_ids = []
-        for text in texts:
-            ids = tokenizer(text, add_special_tokens=False, truncation=False).input_ids
-            all_ids.extend(ids)
-        # Chop the giant token list into fixed-length training sequences.
-        # Drop the last partial chunk — cleaner than padding.
-        self.chunks = [all_ids[i:i + seq_len] for i in range(0, len(all_ids) - seq_len, seq_len)]
 
     def __len__(self):
         return len(self.chunks)
 
     def __getitem__(self, idx):
         return {"input_ids": torch.tensor(self.chunks[idx], dtype=torch.long)}
+
+    @classmethod
+    def from_texts(cls, texts: list[str], tokenizer, seq_len: int, cache_key: str):
+        """
+        Tokenize texts and cache to disk. On subsequent runs with the same
+        config, loads the cached numpy array instead of re-tokenizing.
+        """
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_path = CACHE_DIR / f"{cache_key}.npy"
+        if cache_path.exists():
+            print(f"Loading cached tokenized data from {cache_path}...")
+            chunks = np.load(cache_path)
+            return cls(chunks, seq_len)
+        print(f"Tokenizing {len(texts)} documents into {seq_len}-token chunks...")
+        all_ids = []
+        for text in texts:
+            ids = tokenizer(text, add_special_tokens=False, truncation=False).input_ids
+            all_ids.extend(ids)
+        chunk_list = [all_ids[i:i + seq_len] for i in range(0, len(all_ids) - seq_len, seq_len)]
+        chunks = np.array(chunk_list, dtype=np.int32)
+        np.save(cache_path, chunks)
+        print(f"Cached {len(chunks)} chunks to {cache_path}")
+        return cls(chunks, seq_len)
 
 
 def compute_loss(extra_logits: list, confidences: list, input_ids: torch.Tensor) -> tuple[torch.Tensor, dict]:
@@ -92,16 +113,23 @@ def train():
     print(f"Base model on {device}, dtype {config.DTYPE}")
     print(f"Trainable parameters: {model.trainable_param_count:,} ({model.trainable_param_count / 1e6:.1f}M)")
     print(f"Extra heads: {config.NUM_EXTRA_HEADS}, predicting tokens t+2 through t+{config.NUM_EXTRA_HEADS + 1}")
-    print(f"\nLoading dataset {config.DATASET} (streaming, first {config.MAX_TRAIN_SAMPLES} samples)...")
-    dataset = load_dataset(config.DATASET, config.DATASET_SUBSET, split="train", streaming=True)
-    texts = []
-    for row in dataset:
-        if len(row["text"]) > 100:
-            texts.append(row["text"])
-        if len(texts) >= config.MAX_TRAIN_SAMPLES:
-            break
-    print(f"Tokenizing {len(texts)} documents into {config.SEQ_LEN}-token chunks...")
-    train_dataset = TokenizedDataset(texts, tokenizer, config.SEQ_LEN)
+    # Build a cache key from the dataset config so we only tokenize once.
+    # Changing the model, dataset, subset, sample count, or seq length
+    # produces a different key and triggers re-tokenization.
+    cache_key = hashlib.md5(f"{config.BASE_MODEL}:{config.DATASET}:{config.DATASET_SUBSET}:{config.MAX_TRAIN_SAMPLES}:{config.SEQ_LEN}".encode()).hexdigest()[:12]
+    cache_path = CACHE_DIR / f"{cache_key}.npy"
+    if cache_path.exists():
+        train_dataset = TokenizedDataset.from_texts([], tokenizer, config.SEQ_LEN, cache_key)
+    else:
+        print(f"\nLoading dataset {config.DATASET} (streaming, first {config.MAX_TRAIN_SAMPLES} samples)...")
+        dataset = load_dataset(config.DATASET, config.DATASET_SUBSET, split="train", streaming=True)
+        texts = []
+        for row in dataset:
+            if len(row["text"]) > 100:
+                texts.append(row["text"])
+            if len(texts) >= config.MAX_TRAIN_SAMPLES:
+                break
+        train_dataset = TokenizedDataset.from_texts(texts, tokenizer, config.SEQ_LEN, cache_key)
     print(f"Training on {len(train_dataset)} chunks")
     dataloader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, drop_last=True)
     optimizer = torch.optim.AdamW(model.trainable_params, lr=config.LEARNING_RATE)
