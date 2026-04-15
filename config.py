@@ -9,7 +9,7 @@ NUM_EXTRA_HEADS = int(os.environ.get("NUM_EXTRA_HEADS", "1"))
 GATE_THRESHOLD = float(os.environ.get("GATE_THRESHOLD", "0.85"))
 
 LEARNING_RATE = float(os.environ.get("LEARNING_RATE", "1e-4"))
-BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "4"))
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "2"))
 SEQ_LEN = int(os.environ.get("SEQ_LEN", "512"))
 EPOCHS = int(os.environ.get("EPOCHS", "3"))
 DATASET = os.environ.get("DATASET", "wikimedia/wikipedia")
