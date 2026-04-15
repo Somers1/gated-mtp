@@ -4,6 +4,7 @@ __pycache__/
 checkpoints/
 data_cache/
 logs/
+results/
 .env
 *.egg-info/
 dist/
