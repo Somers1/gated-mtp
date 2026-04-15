@@ -19,8 +19,11 @@ class GatedMTP(nn.Module):
         super().__init__()
         self.base = base_model
         self.num_extra_heads = num_extra_heads
-        self.hidden_dim = base_model.config.hidden_size
-        self.vocab_size = base_model.config.vocab_size
+        # Gemma 4 is multimodal — text config is nested under text_config.
+        # Older/text-only models have hidden_size directly on config.
+        text_config = getattr(base_model.config, "text_config", base_model.config)
+        self.hidden_dim = text_config.hidden_size
+        self.vocab_size = text_config.vocab_size
         self._freeze_base()
         self.extra_heads = nn.ModuleList([nn.Linear(self.hidden_dim, self.vocab_size, bias=False) for _ in range(num_extra_heads)])
         self.gates = nn.ModuleList([nn.Sequential(nn.Linear(self.hidden_dim, 1), nn.Sigmoid()) for _ in range(num_extra_heads)])
