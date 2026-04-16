@@ -146,36 +146,44 @@ class SparseRouter(nn.Module):
         """
         Training forward pass.
 
-        Runs the full model normally, but at each layer also computes the
-        sparse FFN output using the router's mask. Returns both outputs
-        so the training loop can compute reconstruction error.
+        Uses a straight-through estimator: the router produces soft scores
+        which are sigmoid-ed and masked to top-k, then applied as per-neuron
+        weights on the full FFN intermediate activations. The hard mask is
+        added as a straight-through gradient — forward uses the hard mask,
+        backward flows through the soft scores.
         """
         layers = self._get_layers()
-        # Run the full model to get hidden states at each layer
         with torch.no_grad():
             outputs = self.base(input_ids, output_hidden_states=True)
-        # hidden_states[0] = embeddings, hidden_states[i+1] = output of layer i
-        # We need the INPUT to each layer's FFN, which is after attention + residual.
-        # We approximate this by using the hidden states between layers.
         hidden_states = outputs.hidden_states
         layer_losses = []
         layer_stats = []
         for i, (layer, router) in enumerate(zip(layers, self.routers)):
             ffn = self._get_ffn(layer)
-            # Hidden state entering this layer (after attention + residual + norm)
-            # This is approximate — the actual FFN input goes through attention first.
-            # For training the router, this approximation works well enough.
             h = hidden_states[i + 1].float()
-            # Router predicts which neurons matter (float32)
+            # Router produces scores and hard mask
             scores, mask = router(h, sparsity=sparsity)
-            # Cast to FFN weight dtype for the frozen FFN computations
+            # Straight-through estimator: use hard mask in forward,
+            # but let gradients flow through sigmoid(scores)
+            soft_scores = torch.sigmoid(scores)
+            # STE: forward = hard mask, backward = soft scores
+            ste_mask = mask + (soft_scores - soft_scores.detach())
+            # Compute full FFN intermediates (frozen)
             h_ffn = h.to(ffn.gate_proj.weight.dtype)
-            # Full FFN output (teacher signal)
             with torch.no_grad():
-                full_out = self.compute_full_ffn(ffn, h_ffn).float()
-            # Sparse FFN output (student)
-            sparse_out = self.compute_sparse_ffn(ffn, h_ffn, mask).float()
-            # Reconstruction error
+                gate_out = ffn.gate_proj(h_ffn)
+                up_out = ffn.up_proj(h_ffn)
+                activated = torch.nn.functional.silu(gate_out) * up_out  # [batch, seq, ffn_dim]
+            # Apply differentiable mask to intermediates, then project down
+            # Cast activated to float32 so it can multiply with the STE mask
+            masked_activated = activated.float() * ste_mask
+            with torch.no_grad():
+                full_out = ffn.down_proj(activated).float()
+            sparse_out = torch.nn.functional.linear(
+                masked_activated.to(ffn.down_proj.weight.dtype),
+                ffn.down_proj.weight,
+                ffn.down_proj.bias,
+            ).float()
             loss = (sparse_out - full_out).pow(2).mean()
             layer_losses.append(loss)
             # Stats for logging
