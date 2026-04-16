@@ -69,14 +69,14 @@ class SparseRouter(nn.Module):
         text_config = getattr(base_model.config, "text_config", base_model.config)
         self.hidden_dim = text_config.hidden_size
         self.num_layers = text_config.num_hidden_layers
-        # Discover FFN dimensions from the first layer's gate_proj
-        first_layer = self._get_layers()[0]
-        ffn = self._get_ffn(first_layer)
-        self.ffn_dim = ffn.gate_proj.out_features
-        # One router per layer
+        # Discover FFN dimensions per layer — Gemma 4 has double-wide MLPs
+        # on some layers, so ffn_dim can vary.
+        layers = self._get_layers()
+        self.ffn_dims = [self._get_ffn(l).gate_proj.out_features for l in layers]
+        # One router per layer, sized to match that layer's FFN
         self.routers = nn.ModuleList([
-            LayerRouter(self.hidden_dim, self.ffn_dim, bottleneck)
-            for _ in range(self.num_layers)
+            LayerRouter(self.hidden_dim, ffn_dim, bottleneck)
+            for ffn_dim in self.ffn_dims
         ])
 
     def _freeze_base(self):
@@ -194,7 +194,7 @@ class SparseRouter(nn.Module):
                 "loss": loss.item(),
                 "relative_error": relative_error.item(),
                 "active_neurons": int(mask[0, 0].sum().item()),
-                "total_neurons": self.ffn_dim,
+                "total_neurons": self.ffn_dims[i],
             })
         total_loss = sum(layer_losses) / len(layer_losses)
         return {"loss": total_loss, "layer_losses": layer_losses, "layer_stats": layer_stats}
