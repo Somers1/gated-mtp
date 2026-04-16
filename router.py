@@ -166,13 +166,15 @@ class SparseRouter(nn.Module):
             # This is approximate — the actual FFN input goes through attention first.
             # For training the router, this approximation works well enough.
             h = hidden_states[i + 1].float()
-            # Router predicts which neurons matter
+            # Router predicts which neurons matter (float32)
             scores, mask = router(h, sparsity=sparsity)
+            # Cast to FFN weight dtype for the frozen FFN computations
+            h_ffn = h.to(ffn.gate_proj.weight.dtype)
             # Full FFN output (teacher signal)
             with torch.no_grad():
-                full_out = self.compute_full_ffn(ffn, h)
+                full_out = self.compute_full_ffn(ffn, h_ffn).float()
             # Sparse FFN output (student)
-            sparse_out = self.compute_sparse_ffn(ffn, h, mask)
+            sparse_out = self.compute_sparse_ffn(ffn, h_ffn, mask).float()
             # Reconstruction error
             loss = (sparse_out - full_out).pow(2).mean()
             layer_losses.append(loss)
