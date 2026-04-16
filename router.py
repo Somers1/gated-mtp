@@ -85,11 +85,14 @@ class SparseRouter(nn.Module):
 
     def _get_layers(self):
         """Get the list of transformer layers from the base model."""
-        # Gemma 4 multimodal: model.language_model.model.layers
-        # Gemma text-only: model.model.layers
-        if hasattr(self.base, "language_model"):
-            return self.base.language_model.model.layers
-        return self.base.model.layers
+        # Gemma 4 multimodal (AutoModelForCausalLM loads Gemma4ForConditionalGeneration):
+        #   base.model = Gemma4Model, base.model.language_model = Gemma4TextModel (has .layers)
+        # Gemma 4 text-only (Gemma4ForCausalLM):
+        #   base.model = Gemma4TextModel (has .layers directly)
+        inner = self.base.model
+        if hasattr(inner, "language_model"):
+            return inner.language_model.layers
+        return inner.layers
 
     def _get_ffn(self, layer):
         """Get the FFN/MLP module from a transformer layer."""
