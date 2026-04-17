@@ -175,10 +175,10 @@ class SVDSparseModel:
                 original_forward = layer.forward
                 def make_skip_forward(orig):
                     def skip_forward(*args, **kwargs):
-                        # Return first positional arg (hidden_states) unchanged
+                        # Return hidden_states unchanged. Gemma 4 layers return
+                        # just the tensor (not a tuple), so we match that.
                         h = args[0] if args else kwargs.get("hidden_states")
-                        # Match original output format (hidden_states, ...)
-                        return (h,)
+                        return h
                     return skip_forward
                 layer.forward = make_skip_forward(original_forward)
                 restorers.append(_Restorer(layer, "forward", original_forward))
@@ -199,7 +199,6 @@ class SVDSparseModel:
     def remove_hooks(self, handles: list):
         for h in handles:
             h.restore()
-            h.remove()
 
 
 def build_svd_sparse_model(
