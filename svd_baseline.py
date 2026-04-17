@@ -52,39 +52,26 @@ class GateThresholdPredictor:
         self.ffn_dim = ffn.gate_proj.out_features
 
     @torch.no_grad()
-    def predict(self, hidden_state: Tensor, sparsity: float = 0.9) -> Tensor:
-        """
-        Returns active neuron indices.
-
-        hidden_state: [B, T, D]
-        returns: [num_active] index tensor (uniform across batch/seq for simplicity)
-        """
-        # Full gate computation
-        gate_out = self.ffn.gate_proj(hidden_state)
-        gate_activated = F.silu(gate_out)
-        # Use mean absolute activation across batch/seq to rank neurons
-        importance = gate_activated.abs().mean(dim=(0, 1))  # [ffn_dim]
-        k = max(1, int(self.ffn_dim * (1 - sparsity)))
-        _, active_idx = importance.topk(k)
-        return active_idx
-
-    @torch.no_grad()
     def sparse_ffn(self, hidden_state: Tensor, sparsity: float = 0.9) -> Tensor:
         """
-        Run sparse FFN: full gate, then sparse up+down for active neurons only.
+        Run FFN with per-token top-k masking on neurons.
+
+        Computes the full FFN, but masks the activated intermediate so that
+        each token only keeps its top-k neurons. This is a quality measurement
+        (correct per-token routing) — not a speed optimization, since all
+        matmuls still run. To save compute requires custom kernels.
         """
-        active_idx = self.predict(hidden_state, sparsity)
-        # Full gate (already paid for in predict, recompute is fine for clarity)
         gate_out = self.ffn.gate_proj(hidden_state)
-        gate_activated = F.silu(gate_out)
-        # Sparse up and down
-        up_w = self.ffn.up_proj.weight[active_idx]         # [k, D]
-        down_w = self.ffn.down_proj.weight[:, active_idx]   # [D, k]
-        up_out = F.linear(hidden_state, up_w)               # [B, T, k]
-        # Gather only active gate channels
-        active_gate = gate_activated[..., active_idx]        # [B, T, k]
-        activated = active_gate * up_out
-        return F.linear(activated, down_w)                   # [B, T, D]
+        up_out = self.ffn.up_proj(hidden_state)
+        activated = F.silu(gate_out) * up_out  # [B, T, ffn_dim]
+        k = max(1, int(self.ffn_dim * (1 - sparsity)))
+        # Per-token top-k by absolute activation magnitude
+        importance = activated.abs()
+        _, top_idx = importance.topk(k, dim=-1)  # [B, T, k]
+        mask = torch.zeros_like(activated)
+        mask.scatter_(-1, top_idx, 1.0)
+        masked = activated * mask
+        return self.ffn.down_proj(masked)
 
 
 class SVDPredictor:
@@ -121,30 +108,28 @@ class SVDPredictor:
         self.proj_up = (U_r * S_r.unsqueeze(0)).T.to(W.device).to(ffn.gate_proj.weight.dtype)  # [r, ffn_dim]
 
     @torch.no_grad()
-    def predict(self, hidden_state: Tensor, sparsity: float = 0.9) -> Tensor:
-        """
-        Returns active neuron indices using SVD approximation.
-
-        hidden_state: [B, T, D]
-        returns: [num_active] index tensor
-        """
-        # Cheap low-rank gate approximation
-        low_rank = hidden_state @ self.proj_down      # [B, T, r]
-        approx_gate = low_rank @ self.proj_up          # [B, T, ffn_dim]
-        approx_activated = F.silu(approx_gate)
-        # Rank by mean activation magnitude
-        importance = approx_activated.abs().mean(dim=(0, 1))  # [ffn_dim]
-        k = max(1, int(self.ffn_dim * (1 - sparsity)))
-        _, active_idx = importance.topk(k)
-        return active_idx
-
-    @torch.no_grad()
     def sparse_ffn(self, hidden_state: Tensor, sparsity: float = 0.9) -> Tensor:
         """
-        Run sparse FFN: SVD-predicted mask, then sparse gate+up+down.
+        Run FFN using SVD-predicted per-token top-k mask.
+
+        The SVD approximation predicts which neurons matter per token, then we
+        mask the actual activated intermediate. Quality measurement only —
+        all matmuls still run.
         """
-        active_idx = self.predict(hidden_state, sparsity)
-        return gather_sparse_ffn(self.ffn, hidden_state, active_idx)
+        # Cheap low-rank gate approximation per token
+        low_rank = hidden_state @ self.proj_down      # [B, T, r]
+        approx_gate = low_rank @ self.proj_up          # [B, T, ffn_dim]
+        approx_importance = F.silu(approx_gate).abs()
+        k = max(1, int(self.ffn_dim * (1 - sparsity)))
+        _, top_idx = approx_importance.topk(k, dim=-1)  # [B, T, k]
+        mask = torch.zeros_like(approx_importance)
+        mask.scatter_(-1, top_idx, 1.0)
+        # Run actual full FFN, mask the activated intermediate per token
+        gate_out = self.ffn.gate_proj(hidden_state)
+        up_out = self.ffn.up_proj(hidden_state)
+        activated = F.silu(gate_out) * up_out
+        masked = activated * mask
+        return self.ffn.down_proj(masked)
 
 
 class SVDSparseModel:

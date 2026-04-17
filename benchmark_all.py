@@ -134,15 +134,25 @@ def warmup(model, tokenizer, device, n: int = 3):
 
 def benchmark_dense(model, tokenizer, max_tokens: int) -> dict:
     """Benchmark dense baseline."""
-    print("\n[1/5] Dense baseline...")
+    print("\n[1/6] Dense baseline...")
     speed = measure_speed(model, tokenizer, PROMPTS, max_tokens)
     print(f"  {speed['tok_per_s']:.1f} tok/s")
     return {"speed": speed, "kl": 0.0}
 
 
+def benchmark_static_skip(model, tokenizer, max_tokens: int, skip_layers: list[int]) -> dict:
+    """Benchmark static layer skipping using profiler-identified low-importance layers."""
+    print(f"\n[2/6] Static layer skip (skipping layers {skip_layers})...")
+    sparse = SVDSparseModel(model, predictor_type="gate", sparsity=0.0, skip_layers=skip_layers)
+    speed = measure_speed_with_hooks(model, tokenizer, PROMPTS, sparse, max_tokens)
+    kl = measure_quality(model, tokenizer, PROMPTS, sparse)
+    print(f"  {speed['tok_per_s']:.1f} tok/s | KL={kl:.4f}")
+    return {"speed": speed, "kl": kl, "skip_layers": skip_layers}
+
+
 def benchmark_gate_threshold(model, tokenizer, max_tokens: int) -> dict:
     """Benchmark gate thresholding at multiple sparsity levels."""
-    print("\n[2/5] Gate threshold baseline...")
+    print("\n[3/6] Gate threshold baseline...")
     results = {}
     for sparsity in SPARSITY_LEVELS:
         sparse = SVDSparseModel(model, predictor_type="gate", sparsity=sparsity)
@@ -155,7 +165,7 @@ def benchmark_gate_threshold(model, tokenizer, max_tokens: int) -> dict:
 
 def benchmark_svd(model, tokenizer, max_tokens: int, rank: int = 128) -> dict:
     """Benchmark SVD predictor at multiple sparsity levels."""
-    print(f"\n[3/5] SVD predictor (rank={rank})...")
+    print(f"\n[4/6] SVD predictor (rank={rank})...")
     results = {}
     for sparsity in SPARSITY_LEVELS:
         sparse = SVDSparseModel(model, predictor_type="svd", rank=rank, sparsity=sparsity)
@@ -168,7 +178,7 @@ def benchmark_svd(model, tokenizer, max_tokens: int, rank: int = 128) -> dict:
 
 def benchmark_local_router(model, tokenizer, max_tokens: int, checkpoint_path: str) -> dict:
     """Benchmark Stage 2 learned local routers."""
-    print(f"\n[4/5] Learned local routers ({checkpoint_path})...")
+    print(f"\n[5/6] Learned local routers ({checkpoint_path})...")
     from local_router import LocallyRoutedModel, LocalFFNRouter, LocalSkipPredictor
     from sparse_utils import get_text_config
 
@@ -218,7 +228,7 @@ def benchmark_local_router(model, tokenizer, max_tokens: int, checkpoint_path: s
 
 def benchmark_hierarchical(model, tokenizer, max_tokens: int, checkpoint_path: str) -> dict:
     """Benchmark Stage 3 hierarchical router."""
-    print(f"\n[5/5] Hierarchical router ({checkpoint_path})...")
+    print(f"\n[6/6] Hierarchical router ({checkpoint_path})...")
     from hierarchical_router import HierarchicalSparseModel
 
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
@@ -302,7 +312,10 @@ def main():
                         help="Stage 3 hierarchical router checkpoint")
     parser.add_argument("--skip-dense", action="store_true",
                         help="Skip dense baseline speed test (slow)")
+    parser.add_argument("--skip-layers", type=str, default="28,29,30,31,32",
+                        help="Comma-separated layer indices to skip (from profiler)")
     args = parser.parse_args()
+    skip_layers = [int(x) for x in args.skip_layers.split(",") if x.strip()]
 
     print(f"Loading model {config.BASE_MODEL}...")
     tokenizer = AutoTokenizer.from_pretrained(config.BASE_MODEL)
@@ -321,34 +334,40 @@ def main():
         all_results["dense"] = dense_result
         dense_tps = dense_result["speed"]["tok_per_s"]
     else:
-        print("\n[1/5] Skipping dense baseline")
+        print("\n[1/6] Skipping dense baseline")
         dense_tps = 1.0  # placeholder
 
-    # 2. Gate threshold
+    # 2. Static layer skip (free win from profiler results)
+    static_skip_result = benchmark_static_skip(
+        model, tokenizer, args.max_tokens, skip_layers,
+    )
+    all_results["static_skip"] = static_skip_result
+
+    # 3. Gate threshold
     gate_results = benchmark_gate_threshold(model, tokenizer, args.max_tokens)
     all_results["gate_threshold"] = gate_results
 
-    # 3. SVD predictor
+    # 4. SVD predictor
     svd_results = benchmark_svd(model, tokenizer, args.max_tokens, rank=args.svd_rank)
     all_results["svd_predictor"] = svd_results
 
-    # 4. Learned local routers (if checkpoint exists)
+    # 5. Learned local routers (if checkpoint exists)
     if args.local_checkpoint and Path(args.local_checkpoint).exists():
         local_results = benchmark_local_router(
             model, tokenizer, args.max_tokens, args.local_checkpoint,
         )
         all_results["local_router"] = local_results
     else:
-        print("\n[4/5] Skipping local routers (no checkpoint)")
+        print("\n[5/6] Skipping local routers (no checkpoint)")
 
-    # 5. Hierarchical router (if checkpoint exists)
+    # 6. Hierarchical router (if checkpoint exists)
     if args.hier_checkpoint and Path(args.hier_checkpoint).exists():
         hier_results = benchmark_hierarchical(
             model, tokenizer, args.max_tokens, args.hier_checkpoint,
         )
         all_results["hierarchical"] = hier_results
     else:
-        print("\n[5/5] Skipping hierarchical router (no checkpoint)")
+        print("\n[6/6] Skipping hierarchical router (no checkpoint)")
 
     # Summary
     print_summary(all_results, dense_tps)
