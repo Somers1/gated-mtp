@@ -88,7 +88,7 @@ def profile():
         handles = [
             attn.register_forward_hook(attn_hook),
             ffn.register_forward_hook(ffn_hook),
-            layer.register_forward_hook(layer_pre_hook, prepend=True, with_kwargs=True),
+            layer.register_forward_pre_hook(layer_pre_hook, with_kwargs=True),
             layer.register_forward_hook(layer_post_hook),
         ]
         return handles
